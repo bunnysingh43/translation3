@@ -142,76 +142,105 @@ def extract_text_from_pdf_page(page, dpi=300):
         return "", image, None
 
 def create_translated_pdf(original_pdf_path, page_data, output_path, dpi=300):
-    """Create a clean new PDF with translated English text using ReportLab"""
-    st.info("📝 Generating clean translated PDF...")
+    """Create PDF with translated text preserving original layout structure"""
+    st.info("📝 Generating translated PDF with preserved layout...")
     
-    from reportlab.lib.pagesizes import letter, A4
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
-    from reportlab.lib.units import inch
-    from reportlab.lib.enums import TA_LEFT, TA_JUSTIFY
-    
-    doc = SimpleDocTemplate(
-        output_path,
-        pagesize=letter,
-        rightMargin=72,
-        leftMargin=72,
-        topMargin=72,
-        bottomMargin=72,
-    )
-    
-    styles = getSampleStyleSheet()
-    
-    body_style = ParagraphStyle(
-        'CustomBody',
-        parent=styles['Normal'],
-        fontSize=11,
-        leading=14,
-        alignment=TA_JUSTIFY,
-        spaceAfter=12,
-        fontName='Helvetica'
-    )
-    
-    title_style = ParagraphStyle(
-        'PageTitle',
-        parent=styles['Heading2'],
-        fontSize=14,
-        leading=18,
-        spaceAfter=20,
-        textColor='#000080',
-        fontName='Helvetica-Bold'
-    )
-    
-    story = []
+    doc = fitz.open(original_pdf_path)
+    output_doc = fitz.open()
     
     for page_num, data in enumerate(page_data):
+        original_page = doc[page_num]
+        width = original_page.rect.width
+        height = original_page.rect.height
+        
+        new_page = output_doc.new_page(width=width, height=height)
+        
+        pix = original_page.get_pixmap(matrix=fitz.Matrix(1, 1), alpha=False)
+        img_data = pix.tobytes("png")
+        new_page.insert_image(new_page.rect, stream=img_data)
+        
         translated_text = data.get('translated', '')
+        ocr_data = data.get('ocr_data')
         
-        page_title = Paragraph(f"Page {page_num + 1}", title_style)
-        story.append(page_title)
-        story.append(Spacer(1, 0.2 * inch))
-        
-        if translated_text and translated_text.strip():
-            paragraphs = translated_text.split('\n\n')
-            
-            for para_text in paragraphs:
-                para_text = para_text.strip()
-                if para_text:
-                    lines = para_text.split('\n')
-                    clean_text = ' '.join(line.strip() for line in lines if line.strip())
+        if translated_text and translated_text.strip() and ocr_data:
+            try:
+                scale_x = width / (data['image'].width if data.get('image') else width)
+                scale_y = height / (data['image'].height if data.get('image') else height)
+                
+                assamese_words = []
+                word_positions = []
+                
+                for i in range(len(ocr_data['text'])):
+                    if int(ocr_data['conf'][i]) > 30:
+                        text_item = ocr_data['text'][i].strip()
+                        if text_item:
+                            assamese_words.append(text_item)
+                            word_positions.append({
+                                'left': int(ocr_data['left'][i]),
+                                'top': int(ocr_data['top'][i]),
+                                'width': int(ocr_data['width'][i]),
+                                'height': int(ocr_data['height'][i])
+                            })
+                
+                translated_words = translated_text.split()
+                
+                min_words = min(len(assamese_words), len(translated_words))
+                
+                for idx in range(min_words):
+                    pos = word_positions[idx]
+                    word = translated_words[idx]
                     
-                    if clean_text:
-                        para = Paragraph(clean_text, body_style)
-                        story.append(para)
-        else:
-            no_content = Paragraph("[No text content on this page]", body_style)
-            story.append(no_content)
-        
-        if page_num < len(page_data) - 1:
-            story.append(PageBreak())
+                    x = pos['left'] * scale_x
+                    y = pos['top'] * scale_y
+                    w = max(pos['width'] * scale_x, 30)
+                    h = max(pos['height'] * scale_y, 10)
+                    
+                    bg_rect = fitz.Rect(x - 1, y - 1, x + w + 1, y + h + 1)
+                    shape = new_page.new_shape()
+                    shape.draw_rect(bg_rect)
+                    shape.finish(fill=(1, 1, 1), fill_opacity=0.9)
+                    shape.commit(overlay=True)
+                    
+                    font_size = min(max(int(h * 0.65), 6), 11)
+                    text_rect = fitz.Rect(x, y, x + w, y + h)
+                    
+                    try:
+                        new_page.insert_textbox(
+                            text_rect,
+                            word,
+                            fontsize=font_size,
+                            fontname="helv",
+                            color=(0, 0, 0),
+                            align=0,
+                            encoding=fitz.TEXT_ENCODING_LATIN
+                        )
+                    except:
+                        pass
+                        
+            except Exception as e:
+                st.warning(f"⚠️ Page {page_num + 1}: Layout preservation partially failed, using fallback")
+                
+                text_rect = fitz.Rect(40, 40, width - 40, height - 40)
+                shape = new_page.new_shape()
+                shape.draw_rect(text_rect)
+                shape.finish(fill=(1, 1, 1), fill_opacity=0.95)
+                shape.commit(overlay=True)
+                
+                new_page.insert_textbox(
+                    text_rect,
+                    translated_text,
+                    fontsize=8,
+                    fontname="helv",
+                    color=(0, 0, 0),
+                    align=0,
+                    encoding=fitz.TEXT_ENCODING_LATIN
+                )
     
-    doc.build(story)
-    st.success(f"✅ Clean translated PDF created: {output_path}")
+    output_doc.save(output_path)
+    output_doc.close()
+    doc.close()
+    
+    st.success(f"✅ Translated PDF created with preserved layout")
 
 uploaded_file = st.file_uploader("📤 Upload Assamese PDF", type=['pdf'])
 
