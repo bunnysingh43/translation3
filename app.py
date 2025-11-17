@@ -382,25 +382,31 @@ if uploaded_file:
             
             st.markdown("### 📥 Download Results")
             
+            with open(output_pdf, 'rb') as f:
+                pdf_data = f.read()
+            
+            with open(output_txt, 'r', encoding='utf-8') as f:
+                txt_data = f.read()
+            
             col1, col2 = st.columns(2)
             
             with col1:
-                with open(output_pdf, 'rb') as f:
-                    st.download_button(
-                        label="📄 Download Translated PDF",
-                        data=f.read(),
-                        file_name=f"translated_{uploaded_file.name}",
-                        mime="application/pdf"
-                    )
+                st.download_button(
+                    label="📄 Download Translated PDF",
+                    data=pdf_data,
+                    file_name=f"translated_{uploaded_file.name}",
+                    mime="application/pdf",
+                    key="download_pdf_btn"
+                )
             
             with col2:
-                with open(output_txt, 'r', encoding='utf-8') as f:
-                    st.download_button(
-                        label="📝 Download Text File",
-                        data=f.read(),
-                        file_name=f"translation_{uploaded_file.name.replace('.pdf', '.txt')}",
-                        mime="text/plain"
-                    )
+                st.download_button(
+                    label="📝 Download Text File",
+                    data=txt_data,
+                    file_name=f"translation_{uploaded_file.name.replace('.pdf', '.txt')}",
+                    mime="text/plain",
+                    key="download_txt_btn"
+                )
             
         except Exception as e:
             st.error(f"❌ Error during processing: {str(e)}")
